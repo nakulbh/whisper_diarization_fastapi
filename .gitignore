@@ -1,0 +1,11 @@
+# Ignore Python cache and temporary files
+__pycache__/
+temp/
+
+# Ignore virtual environment
+venv/
+
+# Ignore any other temporary or swap files
+*.swp
+*.swo
+.DS_Store
