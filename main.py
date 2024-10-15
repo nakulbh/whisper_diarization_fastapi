@@ -18,8 +18,8 @@ app = FastAPI()
 # Preload models and Pyannote Audio object
 audio = Audio()
 
-# Preload Whisper model once at app startup for efficiency
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+# Set device to CPU explicitly
+device = torch.device("cpu")
 whisper_model = whisper.load_model("large", device=device)
 
 def convert_to_wav(path):
@@ -63,10 +63,10 @@ def diarize_and_transcribe(path, num_speakers, model_size, language):
         rate = f.getframerate()
         duration = frames / float(rate)
 
-    # Load speaker embedding model with GPU support
+    # Load speaker embedding model with CPU support
     embedding_model = PretrainedSpeakerEmbedding(
         "speechbrain/spkrec-ecapa-voxceleb", 
-        device=device  # Use GPU if available
+        device=device  # Explicitly set to CPU
     )
 
     # Create an empty matrix for embeddings
