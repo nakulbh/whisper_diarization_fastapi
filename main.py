@@ -47,14 +47,16 @@ def convert_to_wav(path: str) -> str:
         return output_path
     return path
 
-def transcribe_audio(path: str, model_size: str, language: str):
-    logger.info(f"Transcribing audio from {path} with model size {model_size} and language {language}")
-    if language == 'English' and model_size != 'large':
-        model_name = f"{model_size}.en"
+def transcribe_audio(path: str, model_name: str, language: str):
+    logger.info(f"Transcribing audio from {path} with model {model_name} and language {language}")
+    
+    try:
+        # Check if the specified model is available
         model = whisper.load_model(model_name, device=device)
-    else:
-        model = whisper_model
-
+    except Exception as e:
+        logger.error(f"Failed to load model '{model_name}': {str(e)}")
+        raise HTTPException(status_code=400, detail=f"Failed to load model '{model_name}'. Please check the model name.")
+    
     result = model.transcribe(path)
     return result["segments"]
 
@@ -65,9 +67,9 @@ def segment_embedding(segment: dict, path: str, duration: float, embedding_model
     waveform, sample_rate = audio.crop(path, clip)
     return embedding_model(waveform[None])
 
-def diarize_and_transcribe(path: str, num_speakers: int, model_size: str, language: str):
+def diarize_and_transcribe(path: str, num_speakers: int, model_name: str, language: str):
     path = convert_to_wav(path)
-    segments = transcribe_audio(path, model_size, language)
+    segments = transcribe_audio(path, model_name, language)
     
     with contextlib.closing(wave.open(path, 'r')) as f:
         duration = f.getnframes() / float(f.getframerate())
@@ -104,7 +106,7 @@ async def transcribe_and_diarize(
     file: UploadFile = File(...),
     num_speakers: int = Form(...),
     language: str = Form("any"),
-    model_size: str = Form("large")
+    model_name: str = Form("large")  # Change to model_name
 ):
     logger.info("Received a file upload for transcription and diarization")
     if not isinstance(num_speakers, int) or num_speakers <= 0:
@@ -119,7 +121,7 @@ async def transcribe_and_diarize(
             f.write(await file.read())
         logger.info(f"File saved to {file_path}")
 
-        segments, labels = diarize_and_transcribe(file_path, num_speakers, model_size, language)
+        segments, labels = diarize_and_transcribe(file_path, num_speakers, model_name, language)  # Use model_name
         transcript = format_transcript(segments, labels)
 
         logger.info("Transcription and diarization completed successfully.")
