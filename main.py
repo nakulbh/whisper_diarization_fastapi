@@ -27,7 +27,6 @@ audio = Audio()
 
 # Set device to CPU explicitly
 device = torch.device("cpu")
-whisper_model = whisper.load_model("large", device=device)
 
 class TranscriptionSegment(BaseModel):
     speaker: str
@@ -57,7 +56,7 @@ def transcribe_audio(path: str, model_name: str, language: str):
         logger.error(f"Failed to load model '{model_name}': {str(e)}")
         raise HTTPException(status_code=400, detail=f"Failed to load model '{model_name}'. Please check the model name.")
     
-    result = model.transcribe(path)
+    result = model.transcribe(path, language=language)  # Pass the language parameter if needed
     return result["segments"]
 
 def segment_embedding(segment: dict, path: str, duration: float, embedding_model):
@@ -106,7 +105,7 @@ async def transcribe_and_diarize(
     file: UploadFile = File(...),
     num_speakers: int = Form(...),
     language: str = Form("any"),
-    model_name: str = Form("large")  # Change to model_name
+    model_name: str = Form(...)  # User must specify model_name
 ):
     logger.info("Received a file upload for transcription and diarization")
     if not isinstance(num_speakers, int) or num_speakers <= 0:
@@ -121,7 +120,7 @@ async def transcribe_and_diarize(
             f.write(await file.read())
         logger.info(f"File saved to {file_path}")
 
-        segments, labels = diarize_and_transcribe(file_path, num_speakers, model_name, language)  # Use model_name
+        segments, labels = diarize_and_transcribe(file_path, num_speakers, model_name, language)
         transcript = format_transcript(segments, labels)
 
         logger.info("Transcription and diarization completed successfully.")
