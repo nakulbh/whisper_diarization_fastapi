@@ -14,8 +14,13 @@ import datetime
 import os
 from typing import List
 from pydantic import BaseModel
+import logging
 
 app = FastAPI()
+
+# Set up logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
 # Preload models and Pyannote Audio object
 audio = Audio()
@@ -35,12 +40,15 @@ class TranscriptionResponse(BaseModel):
 def convert_to_wav(path: str) -> str:
     if not path.endswith('.wav'):
         output_path = path.rsplit('.', 1)[0] + '.wav'
+        logger.info(f"Converting {path} to {output_path}")
         subprocess.call(['ffmpeg', '-i', path, output_path, '-y'])
         os.remove(path)  # Remove the original file
+        logger.info(f"Removed original file: {path}")
         return output_path
     return path
 
 def transcribe_audio(path: str, model_size: str, language: str):
+    logger.info(f"Transcribing audio from {path} with model size {model_size} and language {language}")
     if language == 'English' and model_size != 'large':
         model_name = f"{model_size}.en"
         model = whisper.load_model(model_name, device=device)
@@ -63,6 +71,7 @@ def diarize_and_transcribe(path: str, num_speakers: int, model_size: str, langua
     
     with contextlib.closing(wave.open(path, 'r')) as f:
         duration = f.getnframes() / float(f.getframerate())
+        logger.info(f"Audio duration: {duration:.2f} seconds")
 
     embedding_model = PretrainedSpeakerEmbedding(
         "speechbrain/spkrec-ecapa-voxceleb", 
@@ -97,6 +106,10 @@ async def transcribe_and_diarize(
     language: str = Form("any"),
     model_size: str = Form("large")
 ):
+    logger.info("Received a file upload for transcription and diarization")
+    if not isinstance(num_speakers, int) or num_speakers <= 0:
+        raise HTTPException(status_code=400, detail="Number of speakers must be a positive integer.")
+
     temp_dir = "./temp"
     os.makedirs(temp_dir, exist_ok=True)
     file_path = os.path.join(temp_dir, file.filename)
@@ -104,20 +117,22 @@ async def transcribe_and_diarize(
     try:
         with open(file_path, "wb") as f:
             f.write(await file.read())
+        logger.info(f"File saved to {file_path}")
 
         segments, labels = diarize_and_transcribe(file_path, num_speakers, model_size, language)
         transcript = format_transcript(segments, labels)
 
+        logger.info("Transcription and diarization completed successfully.")
         return TranscriptionResponse(transcription=transcript)
     
     except Exception as e:
+        logger.error(f"Processing error: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Processing error: {str(e)}")
+    
     finally:
         if os.path.exists(file_path):
             os.remove(file_path)
+            logger.info(f"Removed temporary file: {file_path}")
         if not os.listdir(temp_dir):
             os.rmdir(temp_dir)
-
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+            logger.info(f"Removed temporary directory: {temp_dir}")
