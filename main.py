@@ -65,7 +65,9 @@ def segment_embedding(segment: dict, path: str, duration: float, embedding_model
     end = min(duration, segment["end"])
     clip = Segment(start, end)
     waveform, sample_rate = audio.crop(path, clip)
-    return embedding_model(waveform[None])
+    # Get the embedding and ensure it's a 1D array
+    embedding = embedding_model(waveform[None])
+    return embedding.squeeze()  # Remove single-dimensional entries
 
 def diarize_and_transcribe(path: str, num_speakers: int, model_name: str, language: str):
     path = convert_to_wav(path)
@@ -80,9 +82,14 @@ def diarize_and_transcribe(path: str, num_speakers: int, model_name: str, langua
         device=device
     )
 
+    # Collect embeddings and ensure they are 2D
     embeddings = np.array([segment_embedding(segment, path, duration, embedding_model) for segment in segments])
     embeddings = np.nan_to_num(embeddings)
-    
+
+    # Ensure the embeddings are 2D (num_segments x embedding_dimension)
+    if embeddings.ndim == 1:
+        embeddings = embeddings.reshape(1, -1)  # Reshape if only one segment
+
     logger.info(f"Embeddings shape: {embeddings.shape}")
     
     # Perform clustering
