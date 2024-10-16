@@ -82,10 +82,24 @@ def diarize_and_transcribe(path: str, num_speakers: int, model_name: str, langua
 
     embeddings = np.array([segment_embedding(segment, path, duration, embedding_model) for segment in segments])
     embeddings = np.nan_to_num(embeddings)
-
-    clustering = AgglomerativeClustering(n_clusters=num_speakers).fit(embeddings)
     
-    return segments, clustering.labels_
+    logger.info(f"Embeddings shape: {embeddings.shape}")
+    
+    # Perform clustering
+    try:
+        clustering = AgglomerativeClustering(num_speakers).fit(embeddings)
+        labels = clustering.labels_
+        logger.info(f"Clustering labels: {labels}")
+    except Exception as e:
+        logger.error(f"Clustering error: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Clustering error: {str(e)}")
+    
+    # Assign speaker labels to segments
+    for i in range(len(segments)):
+        segments[i]["speaker"] = f'SPEAKER {labels[i] + 1}'
+        logger.debug(f"Segment {i}: {segments[i]['speaker']} assigned")
+
+    return segments, labels
 
 def format_transcript(segments: List[dict], labels: np.ndarray) -> List[TranscriptionSegment]:
     transcript = []
