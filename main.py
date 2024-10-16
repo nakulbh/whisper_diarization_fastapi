@@ -31,13 +31,12 @@ def convert_to_wav(path):
     return path
 
 def transcribe_audio(path, model_size, language):
-    global whisper_model  # Use preloaded model for efficiency
-    # Modify model based on language
+    # Load the model dynamically based on language and model size
     if language == 'English' and model_size != 'large':
         model_name = model_size + '.en'
         model = whisper.load_model(model_name, device=device)
     else:
-        model = whisper_model  # Use preloaded model
+        model = whisper_model  # Use preloaded large model for other cases
 
     # Transcribe the audio
     path = convert_to_wav(path)
@@ -98,14 +97,10 @@ def format_transcript(segments, labels):
             transcript.append({
                 "speaker": speaker,
                 "start": time(segment["start"]),
-                "text": segment["text"][1:]  # Remove leading space
+                "text": segment["text"].strip()  # Remove leading space
             })
         else:
-            transcript[-1]["text"] += " " + segment["text"][1:]
-
-    # Assign speaker labels to segments
-    for i in range(len(segments)):
-        segments[i]["speaker"] = 'SPEAKER ' + str(labels[i] + 1)
+            transcript[-1]["text"] += " " + segment["text"].strip()
 
     return transcript
 
