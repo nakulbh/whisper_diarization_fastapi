@@ -40,7 +40,8 @@ def convert_to_wav(path: str) -> str:
     if not path.endswith('.wav'):
         output_path = path.rsplit('.', 1)[0] + '.wav'
         logger.info(f"Converting {path} to {output_path}")
-        subprocess.call(['ffmpeg', '-i', path, output_path, '-y'])
+        # Specify audio codec and sample rate
+        subprocess.call(['ffmpeg', '-i', path, '-acodec', 'pcm_s16le', '-ar', '16000', output_path, '-y'])
         os.remove(path)  # Remove the original file
         logger.info(f"Removed original file: {path}")
         return output_path
@@ -108,6 +109,7 @@ async def transcribe_and_diarize(
     model_name: str = Form(...)  # User must specify model_name
 ):
     logger.info("Received a file upload for transcription and diarization")
+    
     if not isinstance(num_speakers, int) or num_speakers <= 0:
         raise HTTPException(status_code=400, detail="Number of speakers must be a positive integer.")
 
