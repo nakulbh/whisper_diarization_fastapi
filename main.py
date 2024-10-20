@@ -1,4 +1,4 @@
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException
+from fastapi import FastAPI, HTTPException, Form
 from fastapi.responses import JSONResponse
 import whisper
 import torch
@@ -15,6 +15,7 @@ import os
 from typing import List
 from pydantic import BaseModel
 import logging
+import requests
 
 app = FastAPI()
 
@@ -36,11 +37,27 @@ class TranscriptionSegment(BaseModel):
 class TranscriptionResponse(BaseModel):
     transcription: List[TranscriptionSegment]
 
+def download_audio_from_url(url: str, output_dir: str) -> str:
+    file_name = url.split("/")[-1]
+    file_path = os.path.join(output_dir, file_name)
+    
+    logger.info(f"Downloading audio file from {url}")
+    response = requests.get(url)
+    
+    if response.status_code != 200:
+        logger.error(f"Failed to download file from {url}")
+        raise HTTPException(status_code=400, detail="Failed to download file from the provided URL.")
+    
+    with open(file_path, "wb") as f:
+        f.write(response.content)
+    logger.info(f"File downloaded and saved to {file_path}")
+    
+    return file_path
+
 def convert_to_wav(path: str) -> str:
     if not path.endswith('.wav'):
         output_path = path.rsplit('.', 1)[0] + '.wav'
         logger.info(f"Converting {path} to {output_path}")
-        # Specify audio codec and sample rate
         subprocess.call(['ffmpeg', '-i', path, '-acodec', 'pcm_s16le', '-ar', '16000', output_path, '-y'])
         os.remove(path)  # Remove the original file
         logger.info(f"Removed original file: {path}")
@@ -49,15 +66,8 @@ def convert_to_wav(path: str) -> str:
 
 def transcribe_audio(path: str, model_name: str, language: str):
     logger.info(f"Transcribing audio from {path} with model {model_name} and language {language}")
-    
-    try:
-        # Check if the specified model is available
-        model = whisper.load_model(model_name, device=device)
-    except Exception as e:
-        logger.error(f"Failed to load model '{model_name}': {str(e)}")
-        raise HTTPException(status_code=400, detail=f"Failed to load model '{model_name}'. Please check the model name.")
-    
-    result = model.transcribe(path, language=language)  # Pass the language parameter if needed
+    model = whisper.load_model(model_name, device=device)
+    result = model.transcribe(path, language=language)
     return result["segments"]
 
 def segment_embedding(segment: dict, path: str, duration: float, embedding_model):
@@ -65,9 +75,8 @@ def segment_embedding(segment: dict, path: str, duration: float, embedding_model
     end = min(duration, segment["end"])
     clip = Segment(start, end)
     waveform, sample_rate = audio.crop(path, clip)
-    # Get the embedding and ensure it's a 1D array
     embedding = embedding_model(waveform[None])
-    return embedding.squeeze()  # Remove single-dimensional entries
+    return embedding.squeeze()
 
 def diarize_and_transcribe(path: str, num_speakers: int, model_name: str, language: str):
     path = convert_to_wav(path)
@@ -82,30 +91,18 @@ def diarize_and_transcribe(path: str, num_speakers: int, model_name: str, langua
         device=device
     )
 
-    # Collect embeddings and ensure they are 2D
     embeddings = np.array([segment_embedding(segment, path, duration, embedding_model) for segment in segments])
     embeddings = np.nan_to_num(embeddings)
 
-    # Ensure the embeddings are 2D (num_segments x embedding_dimension)
     if embeddings.ndim == 1:
-        embeddings = embeddings.reshape(1, -1)  # Reshape if only one segment
+        embeddings = embeddings.reshape(1, -1)
 
-    logger.info(f"Embeddings shape: {embeddings.shape}")
+    clustering = AgglomerativeClustering(num_speakers).fit(embeddings)
+    labels = clustering.labels_
     
-    # Perform clustering
-    try:
-        clustering = AgglomerativeClustering(num_speakers).fit(embeddings)
-        labels = clustering.labels_
-        logger.info(f"Clustering labels: {labels}")
-    except Exception as e:
-        logger.error(f"Clustering error: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Clustering error: {str(e)}")
-    
-    # Assign speaker labels to segments
     for i in range(len(segments)):
         segments[i]["speaker"] = f'SPEAKER {labels[i] + 1}'
-        logger.debug(f"Segment {i}: {segments[i]['speaker']} assigned")
-
+    
     return segments, labels
 
 def format_transcript(segments: List[dict], labels: np.ndarray) -> List[TranscriptionSegment]:
@@ -124,25 +121,21 @@ def format_transcript(segments: List[dict], labels: np.ndarray) -> List[Transcri
 
 @app.post("/transcribe_and_diarize/", response_model=TranscriptionResponse)
 async def transcribe_and_diarize(
-    file: UploadFile = File(...),
+    audio_url: str = Form(...),
     num_speakers: int = Form(...),
     language: str = Form("any"),
-    model_name: str = Form(...)  # User must specify model_name
+    model_name: str = Form(...)  
 ):
-    logger.info("Received a file upload for transcription and diarization")
+    logger.info("Received a request for transcription and diarization with S3 link")
     
     if not isinstance(num_speakers, int) or num_speakers <= 0:
         raise HTTPException(status_code=400, detail="Number of speakers must be a positive integer.")
 
     temp_dir = "./temp"
     os.makedirs(temp_dir, exist_ok=True)
-    file_path = os.path.join(temp_dir, file.filename)
     
     try:
-        with open(file_path, "wb") as f:
-            f.write(await file.read())
-        logger.info(f"File saved to {file_path}")
-
+        file_path = download_audio_from_url(audio_url, temp_dir)
         segments, labels = diarize_and_transcribe(file_path, num_speakers, model_name, language)
         transcript = format_transcript(segments, labels)
 
